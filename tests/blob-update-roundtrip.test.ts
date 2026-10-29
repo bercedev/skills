@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
 
 vi.mock('@clack/prompts', () => {
   const noop = () => {};
@@ -41,12 +40,7 @@ vi.mock('../src/git.ts', async (importActual) => ({
   cleanupTempDir: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('node:child_process', async (importActual) => ({
-  ...(await importActual<typeof import('node:child_process')>()),
-  spawnSync: vi.fn().mockReturnValue({ status: 0 }),
-}));
-
-import { installFromSource, runAdd } from '../src/add.ts';
+import { fetchSources, installFromSource, runAdd } from '../src/add.ts';
 import { resetRepoTreeAuthState } from '../src/blob.ts';
 import { cloneRepo } from '../src/git.ts';
 import { parseSource } from '../src/source-parser.ts';
@@ -121,7 +115,10 @@ describe('nested snapshot installation followed by project update', () => {
           mode: 'copy',
         });
       } else {
-        const result = await installFromSource(parseSource('vercel-labs/hash-fixture'), {
+        const [fetched] = await fetchSources([
+          { parsed: parseSource('vercel-labs/hash-fixture'), skills: ['example'] },
+        ]);
+        const result = await installFromSource(fetched!, {
           skills: ['example'],
           agents: ['codex'],
         });
@@ -144,7 +141,6 @@ describe('nested snapshot installation followed by project update', () => {
           failCount: 0,
           foundCount: 1,
         });
-        expect(spawnSync).not.toHaveBeenCalled();
         await expect(readFile('skills-lock.json', 'utf-8')).resolves.toBe(lock);
       }
       expect(cloneRepo).toHaveBeenCalledTimes(2);
@@ -155,11 +151,10 @@ describe('nested snapshot installation followed by project update', () => {
         failCount: 0,
         foundCount: 1,
       });
-      // The reinstall subprocess is mocked; discovery, hashes and lock IO are real.
-      expect(spawnSync).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(spawnSync).mock.calls[0]![1]).toEqual(
-        expect.arrayContaining(['add', '--skill', 'example', '-y'])
+      await expect(readFile('.agents/skills/example/references/guide.md', 'utf-8')).resolves.toBe(
+        '# Changed\n'
       );
+      await expect(readFile('skills-lock.json', 'utf-8')).resolves.not.toBe(lock);
     }
   );
 });
